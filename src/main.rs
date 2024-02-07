@@ -38,7 +38,6 @@ fn main() {
                 if let Some(caps) = re.captures(line) {
                     let process_info =
                         format!("Process: {:<15} PID: {}", &caps["command"], &caps["pid"]);
-                    println!("{}", process_info);
 
                     choices.push((process_info, caps["pid"].to_string()));
                 }
