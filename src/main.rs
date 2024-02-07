@@ -1,6 +1,7 @@
 use clap::{Arg, Command};
 use inquire::Select;
 use regex::Regex;
+use std::process::{exit, Command as ProcessCommand};
 
 fn cli() -> Command {
     Command::new("sniff")
@@ -15,53 +16,61 @@ fn cli() -> Command {
 
 fn main() {
     let matches = cli().get_matches();
+    let port_str = matches
+        .get_one::<String>("port")
+        .expect("Port argument missing");
 
-    let port_str = matches.get_one::<String>("port").expect("Port is required");
-
-    match port_str.parse::<usize>() {
+    match port_str.parse::<u16>() {
         Ok(port) => {
-            let output = std::process::Command::new("lsof")
+            let output = ProcessCommand::new("lsof")
                 .arg("-i")
                 .arg(format!("TCP:{}", port))
                 .output()
-                .expect("Failed to execute command");
+                .unwrap_or_else(|_| panic!("Failed to execute lsof command"));
 
             let output_str = String::from_utf8_lossy(&output.stdout);
+            let re =
+                Regex::new(r"^(?P<command>\S+)\s+(?P<pid>\d+)").expect("Failed to compile regex");
 
-            let re = Regex::new(r"^(?P<command>\S+)\s+(?P<pid>\d+)")
-                .expect("Invalid regex. Could not parse output of lsof command.");
-
-            let mut choices: Vec<String> = Vec::new();
+            let mut choices: Vec<(String, String)> = Vec::new();
 
             for line in output_str.lines() {
                 if let Some(caps) = re.captures(line) {
-                    println!("Process: {:<15} PID: {}", &caps["command"], &caps["pid"]);
+                    let process_info =
+                        format!("Process: {:<15} PID: {}", &caps["command"], &caps["pid"]);
+                    println!("{}", process_info);
 
-                    choices.push(format!(
-                        "Process: {:<15} PID: {}",
-                        &caps["command"], &caps["pid"]
-                    ));
+                    choices.push((process_info, caps["pid"].to_string()));
                 }
             }
 
-            let ans = Select::new("Choose a process to kill", choices).prompt();
+            if choices.is_empty() {
+                println!("No processes found on port {}", port);
+                return;
+            }
+
+            let process_choices: Vec<_> = choices.iter().map(|(info, _)| info.as_str()).collect();
+            let ans = Select::new("Choose a process to kill", process_choices).prompt();
 
             match ans {
                 Ok(choice) => {
-                    println!("You chose: {}", choice);
+                    let &(_, ref pid) = choices
+                        .iter()
+                        .find(|(info, _)| info == choice)
+                        .expect("Process not found");
 
-                    std::process::Command::new("kill")
-                        .arg("-9")
-                        .arg(&choice.split(" ").last().expect("Invalid choice"))
+                    println!("Sending SIGKILL to: {}", choice);
+                    ProcessCommand::new("kill")
+                        .arg(pid)
                         .output()
-                        .expect("Failed to execute command");
+                        .unwrap_or_else(|_| panic!("Failed to execute kill command"));
                 }
                 Err(_) => println!("There was an error, please try again"),
             }
         }
         Err(_) => {
             eprintln!("Error: Port must be a valid number");
-            std::process::exit(1);
+            exit(1);
         }
     }
 }
